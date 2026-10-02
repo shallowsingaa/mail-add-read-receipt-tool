@@ -2,11 +2,10 @@
 public_base_url = "https://receipt.example.com"
 database = "/data/receipt.sqlite3"
 timezone = "Asia/Shanghai"
-# Default: OpenResty on the host -> published loopback port -> Docker bridge.
-# Verify connection_ip from an actual request; use that exact peer IP if different.
-# Optional standalone Nginx profile: use ["172.30.97.2/32"] instead.
+# Docker chooses the subnet. Bootstrap with no trusted peer, then verify
+# connection_ip from an actual proxied request and add that exact IP (/32 or /128).
 # 不要信任整个公网，也不要启用 Uvicorn 的 proxy-headers。
-trusted_proxies = ["172.30.97.1/32"]
+trusted_proxies = []
 create_limit = 20
 create_window_seconds = 3600
 retention_days = 90

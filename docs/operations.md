@@ -22,7 +22,7 @@ TOML 字符串要带双引号，数字不带引号。未知参数、非法 URL�
 | `public_base_url` | `https://receipt.example.com` | 生成图片地址使用的公网 origin；不含路径、凭据、查询参数 |
 | `database` | `/data/receipt.sqlite3` | 容器数据卷内数据库路径，通常不要改 |
 | `timezone` | `Asia/Shanghai` | 请求时间和邮件正文使用的时区 |
-| `trusted_proxies` | `["172.30.97.1/32"]` | app 直接信任的代理对端；不同部署按实际请求核对 |
+| `trusted_proxies` | `[]` | 初始不信任转发头；通过实际请求核对代理对端后填写准确 IP |
 | `create_limit` | `20` | 每个来源 IP 在一个窗口内最多创建多少链接 |
 | `create_window_seconds` | `3600` | 创建限速窗口，单位秒 |
 | `retention_days` | `90` | 清理已发送/已取消事件的保留天数 |
@@ -76,7 +76,7 @@ SMTP 已接受，但进程在写回数据库前崩溃时，恢复后可能重发
 | 绑定 80/443 报 address already in use | 使用新版默认 app-only；移除旧版本工具 nginx，不停 1Panel OpenResty |
 | 18000 被占用 | `.env` 改 RECEIPT_PORT，并同步修改 OpenResty 代理目标 |
 | app 日志 PermissionError | server.toml 可由 UID/GID 10001 读取；数据库目录应可写；不要随意改数据卷路径 |
-| Docker 提示子网重叠 | 改 compose.yaml 的子网与 app 固定 IP；独立 Nginx 同步改其 IP，再核对 trusted_proxies |
+| Docker 提示 Pool overlaps | 更新 Compose，去掉固定子网和容器 IP，让 Docker 分配；不要删除其他应用网络；按主指南迁移 |
 | 本机正常、公网 502 | 查 OpenResty 代理、ESA 回源协议/Host/SNI、源站自签名证书与强制校验是否兼容 |
 | 返回 HTML 或验证码 | ESA/WAF 挑战、登录页、防盗链或 OpenResty 静态规则拦截了 API/图片 |
 | 链接 URL 是 example.com/localhost | 修正 public_base_url、重启 app，再创建新链接；旧邮件里的 URL 不会自动改变 |

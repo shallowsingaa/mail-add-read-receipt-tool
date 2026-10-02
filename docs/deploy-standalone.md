@@ -15,7 +15,7 @@ mkdir -p certs
 
 - `public_base_url` 为实际公网 HTTPS 域名。
 - `database` 保持 `/data/receipt.sqlite3`。
-- `trusted_proxies` 改为 **`["172.30.97.2/32"]`**，对应这条方案中 Nginx 的固定地址，而非默认 host 方案的网关。
+- `trusted_proxies` 先保持 **`[]`**。网络由 Docker 自动分配，启动后通过实际图片请求核对 Nginx 的 connection_ip，再填写该地址的 `/32` 或 `/128`，方法见 [主指南第 8 节](deploy-1panel-esa.md)。初始仍能记录和发信，但来源 IP 与创建限速暂时按代理地址计算。
 - 按 [运维手册](operations.md) 填 SMTP，也可先保持未配置状态。
 
 修改 `deploy/nginx.conf` 的两处 `receipt.example.com`，换成实际域名。证书完整链和私钥分别放在：
@@ -79,4 +79,3 @@ docker compose --profile standalone down
 ```
 
 不要加 `-v`，否则删除 SQLite 数据卷。通知和数据规则、备份方法见 [运维手册](operations.md)。
-

@@ -15,3 +15,14 @@ def test_default_compose_can_coexist_with_proxy_on_80_and_443():
             if published in {"80", "443"}:
                 conflicts.append(f"{name} binds host port {published}")
     assert not conflicts, "Existing OpenResty owns these ports: " + ", ".join(conflicts)
+
+
+def test_compose_allows_docker_to_choose_a_free_subnet():
+    compose = yaml.safe_load(Path("compose.yaml").read_text(encoding="utf-8"))
+    network = compose["networks"]["receipt"] or {}
+    assert not network.get("ipam"), "Pinned subnet may overlap an existing Docker network"
+    for service in compose["services"].values():
+        attachments = service.get("networks", {})
+        if isinstance(attachments, dict):
+            for attachment in attachments.values():
+                assert not (attachment or {}).get("ipv4_address"), "Static container IP requires a pinned subnet"

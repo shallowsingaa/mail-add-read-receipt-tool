@@ -68,7 +68,7 @@ docker compose rm -f nginx
 
 若此前启动失败、没有生成该容器，可能提示没有可操作的容器，可继续。更新源码和 Compose；保留 `server.toml`，不要用示例覆盖已填写的 SMTP 密码。
 
-原配置 `trusted_proxies = ["172.30.97.2/32"]` 对应旧 Nginx。host 方案先改为 `["172.30.97.1/32"]`，之后按第 8 节核对实际来源。保留 `database = "/data/receipt.sqlite3"`。
+原配置中的固定代理地址可能已失效。先将 `trusted_proxies` 改为 `[]`，启动后按第 8 节核对实际来源，再填写准确的代理 IP。保留 `database = "/data/receipt.sqlite3"`。
 
 新版默认只启动 app。已有 1Panel 时**不要启用 `standalone` profile**。不要运行 `down -v`，它会删除数据卷；不要改变 Compose 项目名、目录名称或卷名称。原来显式使用了 `-p 名称` 的，之后每条 Compose 命令都继续用同一个名称。
 
@@ -88,7 +88,7 @@ test -f server.toml || cp server.example.toml server.toml
 [service]
 public_base_url = "https://receipt.example.com"
 database = "/data/receipt.sqlite3"
-trusted_proxies = ["172.30.97.1/32"]
+trusted_proxies = []
 ```
 
 `public_base_url` 是实际公网域名，不是源站 IP、127.0.0.1 或 `/api` 路径。它决定生成的图片 URL。SMTP 可后续填写；`host` 和 `from_address` 同时为空时，仍能创建链接和记录访问，通知先排队。
@@ -215,7 +215,7 @@ real_ip_recursive off;
 
 不要信任 `0.0.0.0/0` 或 `::/0`。只有真实连接来自可信网段时，OpenResty 才应相信该头。配置正确后，代理片段中的 `$remote_addr` 才会恢复为 ESA 声称的客户端地址；它仍可能是邮箱图片代理的 IP。[Nginx realip 模块](https://nginx.org/en/docs/http/ngx_http_realip_module.html)
 
-**应用 → OpenResty 的信任：** `server.toml` 的 `trusted_proxies` 只填写 app 直接看到的 OpenResty 对端地址，不填写 ESA 网段。host 模式通过 Docker 桥接后通常是 `172.30.97.1`，以实际请求为准。
+**应用 → OpenResty 的信任：** `server.toml` 的 `trusted_proxies` 只填写 app 直接看到的 OpenResty 对端地址，不填写 ESA 网段。新版由 Docker 自动分配网络，不预设网关或容器 IP；初始 `[]` 表示先不信任转发头。此时仍能记录、发通知，但来源 IP 和创建限速可能暂时按同一个代理地址计算，完成下面的核对后再正式使用。
 
 通过公网域名请求一张测试图片后，运行以下命令。只打印来源字段，不打印管理凭据或全部请求头：
 
@@ -223,11 +223,37 @@ real_ip_recursive off;
 docker compose exec -T app python -c 'import sqlite3,json; d=sqlite3.connect("/data/receipt.sqlite3"); r=d.execute("SELECT details FROM events ORDER BY created DESC LIMIT 1").fetchone(); x=json.loads(r[0]) if r else {}; print({k:x.get(k) for k in ("connection_ip","effective_source_ip","peer_is_trusted_proxy")})'
 ```
 
-若确定的代理 `connection_ip` 不同，将 `trusted_proxies` 改成该 IP `/32`，IPv6 用 `/128`，再重启 app。不信任整个公网或所有 Docker 容器，不启用 Uvicorn `proxy_headers`。
+确定该请求确实经过你的 OpenResty 后，将 `trusted_proxies` 改成输出中 `connection_ip` 对应的 IP `/32`，IPv6 用 `/128`，再重启 app。例如实际对端为 `172.22.0.1`，就填 `["172.22.0.1/32"]`，不要照抄这个示例。不信任整个公网或所有 Docker 容器，不启用 Uvicorn `proxy_headers`。重建网络或代理容器后，重新核对该地址。
 
 通知中的 `connection_ip` 是 app 的直接对端；`effective_source_ip` 是可信代理链推导的地址。请求头是 app 实际收到的字段，可能经过代理改写，并非公网原始报文。
 
 ## 9. 按层排查，不要同时修改所有配置
+
+### 启动报 Pool overlaps
+
+旧 Compose 固定使用 `172.30.97.0/24`，可能与服务器已有 Docker 网络相交。新版去掉了 `ipam.config.subnet` 和两处 `ipv4_address`，让 Docker 自行选择可用网段。
+
+将新版 `compose.yaml` 放回**当前项目目录**，保留原 `server.toml` 和项目名，然后重新执行原启动命令即可。不要删除 1Panel 或其他应用的网络，也不要运行 network prune 或 down -v。
+
+如果需要手动修订旧文件，将 app/nginx 两个服务的网络声明都改为：
+
+```yaml
+    networks:
+      - receipt
+```
+
+文件末尾改为：
+
+```yaml
+networks:
+  receipt: {}
+```
+
+网络名字 `receipt` 没有变，变的是地址分配方式。如果本项目网络以前成功创建并已承载容器，Compose 可能提示网络配置需要重建；仅在该提示出现时，在**这个项目目录**执行不带 `-v` 的 `docker compose down`，再启动。不会删除数据库卷，但会暂时停止本工具；不操作其他项目。
+
+若自动分配仍报地址池不足，需要检查 Docker 守护进程的 default-address-pools 与当前网络分布；那是另一种情况，不能靠继续随机改网段解决。
+
+### 其他问题
 
 | 检查 | 正常结果 | 失败时主要看 |
 | --- | --- | --- |
