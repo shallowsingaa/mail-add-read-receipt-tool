@@ -6,9 +6,9 @@
 
 | 环境 | 验证 | 结果 |
 | --- | --- | --- |
-| Windows 11 x64，Python 3.12.14 | `python -m pytest -q` | 11 项通过 |
+| Windows 11 x64，Python 3.12.14 | `python -m pytest -q` | 12 项通过 |
 | Windows 11 x64 | PyInstaller 生成 exe，`--smoke-test`，实际 TUI 启动与 Ctrl+Q 退出 | 通过 |
-| WSL2 Ubuntu 26.04，Python 3.14.4 | 相同锁定依赖、相同 11 项测试、`pip check` | 全部通过 |
+| WSL2 Ubuntu 26.04，Python 3.14.4 | 相同锁定依赖、12 项测试；此前 `pip check` 通过 | 全部通过 |
 | Docker Linux 引擎，Debian 13，Python 3.12.15 | 原 Dockerfile 构建、非 root UID/GID 10001、SQLite 数据卷、Compose 启动 | 通过 |
 | Nginx 容器 | `nginx -t`、有效证书校验的本地 HTTPS 请求、HTTP 308 重定向 | 通过 |
 | Docker 完整链路 | 两次 GET 和一次 HEAD → 三条事件 → SMTP 接收器实际收到三封独立邮件 | 通过 |
@@ -18,7 +18,17 @@
 
 单元与集成测试还覆盖：管理凭据隔离、并发创建限速、SMTP 失败保存与退避、租约恢复、72 小时失败期限、手动重投、90 天清理，以及 TUI 创建/历史恢复/状态刷新/停用/删除。
 
-WSL 使用项目下独立的 `.venv-wsl`；它不会替换 Windows 的 `.venv`。Ubuntu 初始缺少 ensurepip，使用官方 PyPA get-pip 在该虚拟环境中安装 pip，没有安装系统级 Python 包。WSL 测试出现已有 Windows pytest 缓存目录不可写的警告，不影响测试通过；以后使用 `-o cache_dir=.venv-wsl/pytest-cache` 可避免共享缓存目录。
+## 1Panel 部署修订的验证
+
+旧默认 Compose 的端口回归测试先失败，明确检出 `nginx binds host port 80` 与 `nginx binds host port 443`。新版默认将 Nginx 放入 `standalone` profile，应用只发布 `127.0.0.1:18000`；同一检查通过。Docker Compose 实际渲染的默认服务列表仅有 app。
+
+另起隔离的 `receipt-apponly-check` 项目，使用新版默认网络和端口映射，仅替换成本机测试配置，实际启动成功且 healthy；通过 `http://127.0.0.1:18000/health` 获取正常 JSON。该项目没有启动 Nginx，没有绑定宿主机 80/443。
+
+重新验证了调试部署的 Nginx HTTPS、透明 PNG、3 次 GET/HEAD 对应 3 封 SMTP 邮件、请求详情和代理来源头覆盖。修改后的调试生成脚本移除了 standalone profile 限制以便显式测试 Nginx，这个隔离测试不等于默认生产部署。
+
+已核查 1Panel 官方 OpenResty 模板使用 host 网络，并据此提供常规接入步骤；bridge 方式提供独立附加 Compose 文件。未连接用户实际 1Panel、ESA 控制台或正式域名，因此实际源站证书策略、代理 peer IP、ESA 规则仍需按部署指南验证。用户已说明 ESA 对该域名完全不缓存，文档采用这一前提。
+
+WSL 使用项目下独立的 `.venv-wsl`；它不会替换 Windows 的 `.venv`。Ubuntu 初始缺少 ensurepip，使用官方 PyPA get-pip 在该虚拟环境中安装 pip，没有安装系统级 Python 包。首次 WSL 测试出现已有 Windows pytest 缓存不可写的警告；本轮使用 `-o cache_dir=.venv-wsl/pytest-cache` 后该警告消失。
 
 FastAPI/Starlette 的测试客户端对当前 httpx 兼容方式有弃用提示；本次所有功能测试通过。
 
@@ -52,6 +62,15 @@ python scripts/check-docker-debug.py --after-restart
 docker compose -p receipt-debug -f .docker-test/compose.yaml down
 ```
 
+验证默认 app-only 模式（不要同时运行另一个占用 18000 的应用）：
+
+```sh
+docker compose -p receipt-apponly-check -f .docker-test/app-only.yaml up -d --wait app
+curl -fsS http://127.0.0.1:18000/health
+docker compose -p receipt-apponly-check -f .docker-test/app-only.yaml ps
+docker compose -p receipt-apponly-check -f .docker-test/app-only.yaml down
+```
+
 WSL 的完整测试：
 
 ```sh
@@ -63,4 +82,3 @@ cd /mnt/e/Projects/mail-add-read-receipt-tool
 ## 尚需部署后验证
 
 你的公网域名、正式证书、SMTP 账号凭据和真实邮箱最终收件情况，以及实际邮件编辑器能否保留外链图片。这些需要实际配置和目标邮箱，不能由本地测试替代。
-

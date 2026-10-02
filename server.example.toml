@@ -2,9 +2,11 @@
 public_base_url = "https://receipt.example.com"
 database = "/data/receipt.sqlite3"
 timezone = "Asia/Shanghai"
-# Docker Compose 中 Nginx 的固定地址；直部署改为 ["127.0.0.1/32", "::1/128"]。
+# Default: OpenResty on the host -> published loopback port -> Docker bridge.
+# Verify connection_ip from an actual request; use that exact peer IP if different.
+# Optional standalone Nginx profile: use ["172.30.97.2/32"] instead.
 # 不要信任整个公网，也不要启用 Uvicorn 的 proxy-headers。
-trusted_proxies = ["172.30.97.2/32"]
+trusted_proxies = ["172.30.97.1/32"]
 create_limit = 20
 create_window_seconds = 3600
 retention_days = 90
@@ -21,4 +23,3 @@ password = ""
 from_address = ""
 timeout = 15.0
 min_interval = 2.0
-

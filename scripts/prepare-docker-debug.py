@@ -9,7 +9,7 @@ stage.mkdir(exist_ok=True)
 (stage / "mail").mkdir(exist_ok=True)
 config = (root / "server.example.toml").read_text(encoding="utf-8")
 config = config.replace("https://receipt.example.com", "https://localhost:18443")
-config = config.replace("172.30.97.2", "172.30.98.2")
+config = config.replace("172.30.97.1", "172.30.98.2")
 config = config.replace('host = ""', 'host = "smtp-sink"')
 config = config.replace('from_address = ""', 'from_address = "sender@example.com"')
 config = config.replace('security = "starttls"', 'security = "plain"')
@@ -61,7 +61,9 @@ app = compose["services"]["app"]
 app["build"] = str(root)
 app["volumes"][0] = mount(stage / "server.toml", "/config/server.toml")
 app["networks"]["receipt"]["ipv4_address"] = "172.30.98.3"
+app.pop("ports", None)
 nginx = compose["services"]["nginx"]
+nginx.pop("profiles", None)
 nginx["ports"] = ["127.0.0.1:18080:80", "127.0.0.1:18443:443"]
 nginx["volumes"] = [mount(stage / "nginx.conf", "/etc/nginx/conf.d/default.conf"), mount(stage / "certs", "/etc/nginx/tls")]
 nginx["networks"]["receipt"]["ipv4_address"] = "172.30.98.2"
@@ -72,4 +74,14 @@ compose["services"]["smtp-sink"] = {
     "networks": {"receipt": {"ipv4_address": "172.30.98.4"}},
 }
 (stage / "compose.yaml").write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+app_only = yaml.safe_load((root / "compose.yaml").read_text(encoding="utf-8"))
+app_only_config = (root / "server.example.toml").read_text(encoding="utf-8").replace(
+    "https://receipt.example.com", "http://127.0.0.1:18000")
+(stage / "app-only.toml").write_text(app_only_config, encoding="utf-8")
+app_only["services"]["app"]["build"] = str(root)
+app_only["services"]["app"]["image"] = "receipt-debug-app:latest"
+app_only["services"]["app"]["volumes"][0] = mount(stage / "app-only.toml", "/config/server.toml")
+app_only["services"]["nginx"]["volumes"] = [
+    mount(stage / "nginx.conf", "/etc/nginx/conf.d/default.conf"), mount(stage / "certs", "/etc/nginx/tls")]
+(stage / "app-only.yaml").write_text(yaml.safe_dump(app_only, sort_keys=False), encoding="utf-8")
 print(f"Prepared {stage}; generate a localhost TLS certificate before starting Compose")

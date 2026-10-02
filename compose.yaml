@@ -10,13 +10,17 @@ services:
     networks:
       receipt:
         ipv4_address: 172.30.97.3
-    # 本机调试才需要映射 8000；公网仅通过 Nginx 访问。
+    # Existing 1Panel/OpenResty (host networking) forwards to this loopback port.
+    ports:
+      - "127.0.0.1:${RECEIPT_PORT:-18000}:8000"
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
   nginx:
+    # Explicit opt-in only; existing 1Panel installations must not enable this.
+    profiles: ["standalone"]
     image: nginx:stable-alpine
     restart: unless-stopped
     depends_on:
@@ -45,4 +49,3 @@ networks:
     ipam:
       config:
         - subnet: 172.30.97.0/24
-

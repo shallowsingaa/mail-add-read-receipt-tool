@@ -1,0 +1,13 @@
+# Only for an existing OpenResty container using bridge networking.
+# Set RECEIPT_PROXY_NETWORK to its actual network name in .env.
+services:
+  app:
+    networks:
+      proxy:
+        aliases:
+          - receipt-tool-app
+
+networks:
+  proxy:
+    external: true
+    name: ${RECEIPT_PROXY_NETWORK:?Set RECEIPT_PROXY_NETWORK to the existing OpenResty network}

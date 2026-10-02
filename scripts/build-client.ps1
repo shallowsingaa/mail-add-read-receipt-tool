@@ -9,6 +9,8 @@ Copy-Item -LiteralPath client.example.toml -Destination dist/client.toml
 Copy-Item -LiteralPath README.md -Destination dist/README.md
 Copy-Item -LiteralPath LICENSE -Destination dist/LICENSE
 Copy-Item -LiteralPath VALIDATION.md -Destination dist/VALIDATION.md
+New-Item -ItemType Directory -Path dist/docs -Force | Out-Null
+Copy-Item -Path docs/*.md -Destination dist/docs
 & .\dist\receipt-client.exe --smoke-test
 if ($LASTEXITCODE -ne 0) { throw 'exe 运行时验证失败' }
-Compress-Archive -Path dist/receipt-client.exe,dist/client.toml,dist/README.md,dist/LICENSE,dist/VALIDATION.md -DestinationPath dist/receipt-client-windows-x64.zip -Force
+Compress-Archive -Path dist/receipt-client.exe,dist/client.toml,dist/README.md,dist/LICENSE,dist/VALIDATION.md,dist/docs -DestinationPath dist/receipt-client-windows-x64.zip -Force
