@@ -1,0 +1,23 @@
+[Unit]
+Description=Email pixel request notification server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=receipt
+Group=receipt
+WorkingDirectory=/opt/mail-read-receipt
+Environment=RECEIPT_CONFIG=/etc/mail-read-receipt/server.toml
+ExecStart=/opt/mail-read-receipt/.venv/bin/receipt-server
+Restart=on-failure
+TimeoutStopSec=300
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mail-read-receipt
+
+[Install]
+WantedBy=multi-user.target
+

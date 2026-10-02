@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mail-read-receipt"
+version = "0.1.0"
+description = "Self-hosted email pixel request notifications and Windows TUI"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+server = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "email-validator>=2.2,<3", "tzdata>=2025"]
+client = ["textual>=1,<9", "httpx>=0.28,<1"]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "pillow>=11,<13", "pyinstaller>=6,<7", "pyyaml>=6,<7"]
+
+[project.scripts]
+receipt-client = "receipt.client:main"
+receipt-server = "receipt.server:main"
+
+[tool.setuptools.packages.find]
+include = ["receipt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

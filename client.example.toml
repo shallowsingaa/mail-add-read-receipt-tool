@@ -1,0 +1,4 @@
+[client]
+api_base_url = "https://receipt.example.com"
+timeout_seconds = 15
+

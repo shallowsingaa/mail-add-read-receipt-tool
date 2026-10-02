@@ -1,0 +1,48 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 5m
+    volumes:
+      - ./server.toml:/config/server.toml:ro
+      - receipt-data:/data
+    networks:
+      receipt:
+        ipv4_address: 172.30.97.3
+    # 本机调试才需要映射 8000；公网仅通过 Nginx 访问。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/tls:ro
+    networks:
+      receipt:
+        ipv4_address: 172.30.97.2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  receipt-data:
+
+networks:
+  receipt:
+    ipam:
+      config:
+        - subnet: 172.30.97.0/24
+

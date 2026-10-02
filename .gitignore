@@ -18,6 +18,7 @@ dist/
 
 # Virtual environments
 .venv
+.venv-wsl/
 env/
 venv/
 
@@ -80,3 +81,12 @@ $RECYCLE.BIN/
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# Runtime state and credentials
+server.toml
+client.toml
+history.json*
+data/
+certs/
+receipt-client.spec
+.docker-test/

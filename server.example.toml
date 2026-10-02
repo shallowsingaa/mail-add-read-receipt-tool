@@ -1,0 +1,24 @@
+[service]
+public_base_url = "https://receipt.example.com"
+database = "/data/receipt.sqlite3"
+timezone = "Asia/Shanghai"
+# Docker Compose 中 Nginx 的固定地址；直部署改为 ["127.0.0.1/32", "::1/128"]。
+# 不要信任整个公网，也不要启用 Uvicorn 的 proxy-headers。
+trusted_proxies = ["172.30.97.2/32"]
+create_limit = 20
+create_window_seconds = 3600
+retention_days = 90
+retry_hours = 72
+worker_interval = 1.0
+
+[smtp]
+# host 和 from_address 同时填写；未配置时记录请求，但不发信。
+host = ""
+port = 587
+security = "starttls" # starttls / ssl（通常 465）/ plain（仅用于可信本地中继）
+username = ""
+password = ""
+from_address = ""
+timeout = 15.0
+min_interval = 2.0
+
