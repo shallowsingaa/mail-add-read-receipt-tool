@@ -1,10 +1,20 @@
 # 在已有 1Panel、OpenResty 和阿里云 ESA 的服务器上部署
 
-这份指南适用于：公网 Debian 服务器由 1Panel 管理，OpenResty 已监听 80/443，域名接入阿里云 ESA，并已关闭缓存。
+**适用场景：**
 
-示例域名是 `receipt.example.com`，目录是 `/opt/mail-add-read-receipt-tool`。替换成实际值。**旧版升级要留在原项目目录中**，不要为了照抄示例另建目录，否则 Compose 项目名和数据卷可能改变。
+- 公网 Debian 服务器由 1Panel 管理；
+- OpenResty 已监听 80/443；
+- 域名已接入阿里云 ESA，并关闭了缓存。
 
-## 1. 证书放在哪里，谁负责 HTTPS
+**示例约定：** 域名 `receipt.example.com`，项目目录 `/opt/mail-add-read-receipt-tool`。请全部换成你的实际值。
+
+> **升级用户请注意：** 旧版升级必须留在**原项目目录**。不要为了照抄示例另建目录，否则 Compose 项目名和数据卷可能改变，数据会“丢失”（其实是连上了新卷）。
+
+普通用户只使用 Windows 客户端请看 [客户端使用说明](client-guide.md)；本文面向部署者。
+
+---
+
+## 1. 谁负责 HTTPS？证书放在哪？
 
 ```text
 邮件客户端 / Windows 工具
@@ -21,20 +31,33 @@ app 容器（内部端口 8000）
     └─ SMTP 发送图片请求通知
 ```
 
-app 无需处理公网 TLS，无需读取私钥。你**不用把 1Panel 的证书复制到本项目目录**。旧方案另起 Nginx 来处理 HTTPS，容器需要通过挂载读到证书，才要求准备 `certs/`；即使使用独立 Nginx，证书也可放在其他位置，只需调整挂载路径。
+**结论：** app **不处理**公网 TLS，也**不读取**私钥。你**不需要**把 1Panel 的证书复制到本项目目录。
 
-### 现有通配符自签名证书是否能继续用？
+| 方案 | 证书怎么做 |
+| --- | --- |
+| 本文默认（app-only） | HTTPS 由 ESA + 1Panel OpenResty 负责，项目内无需 `certs/` |
+| 独立 Nginx（备用） | 才需要挂载证书；也可把证书放别处，只改挂载路径。见 [独立部署](deploy-standalone.md) |
 
-区分两段连接：
+### 现有通配符自签名证书还能继续用吗？
 
-- **客户端 → ESA**：看到的是 ESA 边缘证书，应受浏览器、邮箱图片代理和 Python 信任，且匹配访问域名。
-- **ESA → OpenResty**：这是回源连接，使用你在 1Panel 配置的源站证书。
+分清两段连接：
 
-通配符决定域名覆盖范围，不决定证书是否受信任。源站自签名证书可留在 OpenResty；能否用于 HTTPS 回源，取决于 ESA 的源站证书校验设置。ESA 官方说明，默认不校验 HTTPS 回源证书；启用强制校验后会检查有效期、域名和信任链，失败时可能返回 502。[ESA 回源证书说明](https://www.alibabacloud.com/help/en/edge-security-acceleration/esa/user-guide/back-to-source-protocols-and-ports)
+| 连接 | 看到的证书 | 要求 |
+| --- | --- | --- |
+| 客户端 → ESA | ESA 边缘证书 | 应被浏览器、邮箱图片代理、Python 信任，且匹配访问域名 |
+| ESA → OpenResty | 你在 1Panel 配置的源站证书 | 能否用于 HTTPS 回源，取决于 ESA 的源站证书校验设置 |
 
-若当前域名访问正常，先保留已有设置。不需要让 app 再配置 HTTPS，也不要把源站自签名证书误当成公网客户端应信任的证书。边缘证书独立于源站证书。[ESA 边缘证书说明](https://www.alibabacloud.com/help/en/edge-security-acceleration/esa/user-guide/configure-edge-certificates/)
+**通配符**只决定域名覆盖范围，**不决定**证书是否受信任。
 
-## 2. 先检查 OpenResty 网络模式
+- 源站自签名证书可以留在 OpenResty。
+- ESA 官方默认**不校验** HTTPS 回源证书；若启用强制校验，会检查有效期、域名和信任链，失败可能 502。参见 [ESA 回源证书说明](https://www.alibabacloud.com/help/en/edge-security-acceleration/esa/user-guide/back-to-source-protocols-and-ports)。
+- 边缘证书独立于源站证书。参见 [ESA 边缘证书](https://www.alibabacloud.com/help/en/edge-security-acceleration/esa/user-guide/configure-edge-certificates/)。
+
+**若当前域名访问正常，先原样保留，不要动。** 不要给 app 再配 HTTPS，也不要把源站自签名证书当成“公网客户端应信任的证书”。
+
+---
+
+## 2. 先确认 OpenResty 的网络模式
 
 在服务器 SSH 中执行：
 
@@ -43,21 +66,32 @@ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
 docker inspect --format '{{.HostConfig.NetworkMode}}' 你的OpenResty容器名
 ```
 
-第二条中的容器名取第一条结果里镜像含 `openresty` 的那行。
+第二条的容器名：取第一条结果里镜像名含 `openresty` 的那一行的 `Names`。
 
-- 输出 **`host`**：按下面常规步骤，代理目标用 `http://127.0.0.1:18000`。
-- 输出 bridge 网络名：先看本文最后的 bridge 分支。
-- OpenResty 直接安装在宿主机：按 host 方案。
+| 第二条输出 | 怎么做 |
+| --- | --- |
+| **`host`** | 按下文常规步骤；代理目标用 `http://127.0.0.1:18000` |
+| 某个 bridge 网络名 | 先看文末「OpenResty 使用 bridge 网络的分支」 |
+| （OpenResty 直接装在宿主机） | 按 host 方案 |
 
-已核实的 [1Panel 官方 OpenResty 模板](https://github.com/1Panel-dev/appstore/blob/dev/apps/openresty/1.31.1.1-2-4-noble/docker-compose.yml) 使用 host 网络，仍以你的 inspect 结果为准。
+已核实的 [1Panel 官方 OpenResty 模板](https://github.com/1Panel-dev/appstore/blob/dev/apps/openresty/1.31.1.1-2-4-noble/docker-compose.yml) 使用 host 网络；仍以你的 `inspect` 结果为准。
 
-## 3. 从旧版迁移，解决 80 端口冲突
+---
 
-首次部署跳到第 4 节。
+## 3. 从旧版迁移（解决 80 端口冲突）
 
-报错 `failed to bind host port ...:80 ... address already in use` 的原因：旧版本工具 Nginx 也要绑定 80，而 OpenResty 已占用。需要移除的是**本工具的 nginx 服务**，不是 1Panel 的 OpenResty。
+**首次部署请直接跳到第 4 节。**
 
-在原项目目录检查后，仅停止并删除本工具 nginx：
+若启动时报：
+
+```text
+failed to bind host port ...:80 ... address already in use
+```
+
+原因：旧版本工具自带的 Nginx 也要绑定 80，而 OpenResty 已占用。
+**要移除的是本工具的 nginx，不是 1Panel 的 OpenResty。**
+
+在**原项目目录**执行：
 
 ```sh
 docker compose ls
@@ -66,15 +100,29 @@ docker compose stop nginx
 docker compose rm -f nginx
 ```
 
-若此前启动失败、没有生成该容器，可能提示没有可操作的容器，可继续。更新源码和 Compose；保留 `server.toml`，不要用示例覆盖已填写的 SMTP 密码。
+若此前启动失败、从未生成该容器，提示“没有可操作的容器”可以忽略，继续往下。
 
-原配置中的固定代理地址可能已失效。先将 `trusted_proxies` 改为 `[]`，启动后按第 8 节核对实际来源，再填写准确的代理 IP。保留 `database = "/data/receipt.sqlite3"`。
+然后：
 
-新版默认只启动 app。已有 1Panel 时**不要启用 `standalone` profile**。不要运行 `down -v`，它会删除数据卷；不要改变 Compose 项目名、目录名称或卷名称。原来显式使用了 `-p 名称` 的，之后每条 Compose 命令都继续用同一个名称。
+1. 更新源码和 Compose 文件。
+2. **保留**你已填好的 `server.toml`（不要用示例覆盖掉 SMTP 密码）。
+3. 把 `trusted_proxies` 先改成 `[]`，启动后按第 8 节核对真实来源，再填写准确代理 IP。
+4. 保留 `database = "/data/receipt.sqlite3"`。
+
+**新版默认只启动 app。** 已有 1Panel 时：
+
+- **不要**启用 `standalone` profile；
+- **不要**运行 `down -v`（会删数据卷）；
+- **不要**改变 Compose 项目名、目录名或卷名；
+- 若你以前用了 `-p 名称`，之后每条 Compose 命令都继续加同一个名称。
+
+---
 
 ## 4. 准备配置并启动应用
 
-首次部署，将服务端包解压到项目目录，进入目录：
+### 4.1 解压并进入目录
+
+首次部署，把服务端包解压到项目目录后：
 
 ```sh
 cd /opt/mail-add-read-receipt-tool
@@ -82,7 +130,9 @@ ls Dockerfile compose.yaml server.example.toml
 test -f server.toml || cp server.example.toml server.toml
 ```
 
-编辑 `server.toml`，至少核对下面三项。这是节选，保留示例的其他参数和 `[smtp]` 部分：
+### 4.2 编辑 `server.toml`
+
+至少核对下面三项（节选，其余参数和 `[smtp]` 段请保留）：
 
 ```toml
 [service]
@@ -91,9 +141,17 @@ database = "/data/receipt.sqlite3"
 trusted_proxies = []
 ```
 
-`public_base_url` 是实际公网域名，不是源站 IP、127.0.0.1 或 `/api` 路径。它决定生成的图片 URL。SMTP 可后续填写；`host` 和 `from_address` 同时为空时，仍能创建链接和记录访问，通知先排队。
+| 项 | 填什么 | 不要填什么 |
+| --- | --- | --- |
+| `public_base_url` | 实际公网域名 | 源站 IP、`127.0.0.1`、带 `/api` 的路径 |
+| `database` | 保持 `/data/receipt.sqlite3` | 随意改路径 |
+| `trusted_proxies` | 先 `[]` | 整个公网、所有 Docker 网段 |
 
-容器用户 UID/GID 是 10001，要能读到配置：
+它决定生成的图片 URL。SMTP 可以稍后再填：`host` 与 `from_address` 都为空时，仍能创建链接、记录访问，通知先排队。
+
+### 4.3 设置权限并启动
+
+容器用户 UID/GID 为 10001，需要能读到配置：
 
 ```sh
 sudo chown root:10001 server.toml
@@ -105,26 +163,51 @@ docker compose logs --tail=80 app
 curl -fsS http://127.0.0.1:18000/health
 ```
 
-`config --quiet` 成功时无输出；app 最终应显示 healthy。最后一条预期为 `{"status":"ok","smtp_configured":false}`，已填 SMTP 时是 `true`。`true` 不验证邮箱密码或最终收件。
+预期结果：
 
-这条路线不需要创建 `certs/`、修改 `deploy/nginx.conf` 或开放公网 18000。
+| 命令 | 正常表现 |
+| --- | --- |
+| `docker compose config --quiet` | 无输出 |
+| `docker compose ps` | app 最终 `healthy` |
+| `curl .../health` | `{"status":"ok","smtp_configured":false}`（已填 SMTP 时为 `true`） |
 
-如果 18000 也被占用，在项目 `.env` 中写 `RECEIPT_PORT=18001`，重新 `docker compose up -d app`，并把下面的代理目标改为 `http://127.0.0.1:18001`；容器内部仍为 8000。
+`true` 只表示配置了 SMTP，**不验证**密码或最终收件。
+
+本路线**不需要**创建 `certs/`、改 `deploy/nginx.conf`，也**不需要**对公网开放 18000。
+
+### 4.4 如果 18000 也被占用
+
+在项目 `.env` 中写：
+
+```env
+RECEIPT_PORT=18001
+```
+
+然后：
+
+```sh
+docker compose up -d app
+```
+
+并把后面 OpenResty 的代理目标改为 `http://127.0.0.1:18001`。容器内部端口仍是 8000。
+
+---
 
 ## 5. 在 1Panel 配置站点反向代理
 
-建议用追踪专用域名，例如 `receipt.example.com`。不要把另一个业务网站的整个根路径替换掉。
+建议使用**追踪专用域名**，例如 `receipt.example.com`。不要把另一个业务网站的整个根路径替换掉。
 
-1. 在 1Panel 网站中创建或打开该域名的站点。
+1. 在 1Panel「网站」中创建或打开该域名的站点。
 2. 选择反向代理网站，或在已有站点添加路径 `/` 的代理。
-3. 代理目标填 **`http://127.0.0.1:18000`**。这里 HTTP 是本机连接，与公网 HTTPS 不矛盾。
-4. 关闭该代理缓存。ESA 已不缓存，OpenResty 这一层也应不缓存。
-5. HTTPS 沿用 1Panel 已配置的源站证书和端口；ESA 回源 Host/SNI 应匹配该站点。
-6. 保存并重载 OpenResty，不需要停止整个 OpenResty 服务。
+3. 代理目标填 **`http://127.0.0.1:18000`**。
+   （这里是本机 HTTP，与公网 HTTPS 不矛盾。）
+4. **关闭**该代理缓存。ESA 已不缓存，OpenResty 这一层也应不缓存。
+5. HTTPS 沿用 1Panel 已配置的源站证书和端口；ESA 回源的 Host/SNI 应匹配该站点。
+6. 保存并**重载** OpenResty（不必停止整个 OpenResty 服务）。
 
-按钮名称随面板版本变化。原则是把站点请求原样转发给 app，保留 `/api/*` 和 `/pixel/*` 路径。
+按钮名称随面板版本变化。原则只有一条：**把站点请求原样转发给 app**，保留 `/api/*` 和 `/pixel/*` 路径。
 
-如果要核对站点配置，参考 `deploy/openresty-location.conf`：
+若要核对站点配置，可参考 `deploy/openresty-location.conf`：
 
 ```nginx
 location / {
@@ -142,25 +225,35 @@ location / {
 }
 ```
 
-放在**该站点现有的 `server { ... }` 内**。已有 `location /` 时编辑或替换它，不添加同名 location。面板可能通过 include 生成代理配置，应修改实际生效的那段。保留 1Panel 管理的 `listen`、域名、证书和其他站点设置。
+**放在该站点现有的 `server { ... }` 内。** 已有 `location /` 时请编辑或替换，不要添加同名 location。面板可能通过 include 生成代理配置，应修改**实际生效**的那段。保留 1Panel 管理的 `listen`、域名、证书和其他站点设置。
+
+---
 
 ## 6. 核对 ESA 回源与缓存
 
-你已对该域名完全不缓存，可以保留。确认规则覆盖 `/pixel/*` 和 `/api/*`，没有更高优先级缓存规则、边缘函数或页面托管截走请求。
+前提：你已对该域名**完全不缓存**。请再确认：
 
-图片 URL 必须直接返回 `image/png`。邮箱图片加载程序和 TUI 无法完成交互式 JS、验证码或滑块挑战；若 ESA 对这些路径启用挑战，需要使用允许直接回源的路径规则。避免把正常图片请求改写成防盗链错误页、登录页或 HTML 页面。
+- 规则覆盖 `/pixel/*` 和 `/api/*`；
+- 没有更高优先级的缓存规则、边缘函数或页面托管把请求截走；
+- 图片 URL 必须能**直接**返回 `image/png`。
 
-从外部检查公网入口，使用 GET，不对 `/health` 使用 `curl -I`：
+邮箱图片加载程序和本工具的 TUI **无法**完成交互式 JS、验证码或滑块挑战。若 ESA 对这些路径启用了挑战，请配置允许直接回源的路径规则。避免把正常图片请求改写成防盗链错误页、登录页或 HTML 页面。
+
+从外部检查公网入口（用 GET，**不要**对 `/health` 用 `curl -I`）：
 
 ```sh
 curl -fsS https://receipt.example.com/health
 ```
 
-不要加 `-k`，此处应正常通过 ESA 边缘证书验证。如果本机检查正常而这一步失败，先查 ESA/OpenResty，不必先改 Python 代码。
+**不要加 `-k`。** 此处应正常通过 ESA 边缘证书验证。若本机检查正常而这一步失败，先查 ESA / OpenResty，不必先改 Python 代码。
 
-## 7. 填写 SMTP，完成一次人工验收
+---
 
-格式示例，按邮箱服务商实际信息填写：
+## 7. 填写 SMTP，并做一次人工验收
+
+### 7.1 填 SMTP
+
+格式示例（按邮箱服务商实际信息填写）：
 
 ```toml
 [smtp]
@@ -174,35 +267,47 @@ timeout = 15.0
 min_interval = 2.0
 ```
 
-465 通常使用 `security = "ssl"`，以服务商要求为准。发件地址应是该账号允许使用的地址。保存后：
+- 端口 465 通常用 `security = "ssl"`，以服务商要求为准。
+- `from_address` 应是该账号允许使用的地址。
+
+保存后：
 
 ```sh
 docker compose restart app
 docker compose logs --tail=80 app
 ```
 
-然后：
+### 7.2 人工验收清单
 
-1. 客户端 API 地址填公网域名，重启客户端。
-2. 创建链接，通知邮箱填你能收信的地址，备注写“部署测试”。
-3. 将图片 URL 原样复制到浏览器打开。透明小图肉眼不可见是正常现象。
-4. 客户端刷新状态，检查事件计数增加、通知从 pending 变为 sent；检查邮箱和垃圾箱。
-5. 用下面两条 curl 测试同一链接。每条都会产生一次访问和一封通知：
+1. 客户端 API 地址填**公网域名**，重启客户端。
+2. 创建链接：通知邮箱填你能收信的地址，备注写“部署测试”。
+3. 把生成的图片 URL **原样**复制到浏览器打开。透明小图肉眼看不见是正常的。
+4. 在客户端点「刷新状态」：
+   - 事件计数应增加；
+   - 通知应从 `pending` 变为 `sent`；
+   - 检查邮箱和垃圾箱。
+5. 用下面两条 curl 测同一链接（每条都会产生一次访问和一封通知）：
 
-```sh
-curl -fsS -o /dev/null 'https://receipt.example.com/pixel/替换成实际编号.png'
-curl -fsS -o /dev/null 'https://receipt.example.com/pixel/替换成实际编号.png'
-```
+   ```sh
+   curl -fsS -o /dev/null 'https://receipt.example.com/pixel/替换成实际编号.png'
+   curl -fsS -o /dev/null 'https://receipt.example.com/pixel/替换成实际编号.png'
+   ```
 
-检查是否新增两条事件。判断 ESA 是否真的回源，应以服务端计数为准；不要只根据浏览器看起来刷新过判断。最后将 HTML 插入真实邮件并发送，验证邮件编辑器确实保留外链图片。
+6. 确认新增了两条事件。
+   判断 ESA 是否真的回源，**以服务端计数为准**，不要只看浏览器“好像刷新过”。
+7. 最后把 HTML 插入真实邮件并发送，确认邮件编辑器会保留外链图片。
 
-## 8. 真实 IP 要分两层配置
+---
 
-先把功能跑通，再恢复真实 IP。不恢复也能通知，只是来源可能显示为 ESA 节点。
+## 8. 真实 IP：分两层配置
 
-**OpenResty → ESA 的信任：** ESA 的托管转换可添加 `ali-real-client-ip`，表示连接到 ESA 的客户端地址。需要时启用该功能，再在 1Panel 真实 IP 设置中选择该请求头，并仅信任实际 ESA 回源网段。[ESA 托管转换说明](https://help.aliyun.com/zh/edge-security-acceleration/esa/user-guide/managed-conversion)
+先把功能跑通，再恢复真实 IP。不恢复也能发通知，只是来源可能显示为 ESA 节点。
 
-对应 Nginx 原理如下，`ESA实际回源CIDR` 必须替换，不能直接粘贴：
+### 8.1 OpenResty → 信任 ESA
+
+ESA 的托管转换可添加 `ali-real-client-ip`，表示“连接到 ESA 的客户端地址”。需要时启用该功能，再在 1Panel 真实 IP 设置中选择该请求头，并**仅信任实际 ESA 回源网段**。[ESA 托管转换](https://help.aliyun.com/zh/edge-security-acceleration/esa/user-guide/managed-conversion)
+
+对应 Nginx 原理如下。`ESA实际回源CIDR` **必须替换**，不能直接粘贴：
 
 ```nginx
 set_real_ip_from ESA实际回源CIDR;
@@ -211,31 +316,62 @@ real_ip_header ali-real-client-ip;
 real_ip_recursive off;
 ```
 
-从当前站点控制台或官方支持获取适用于你的回源列表，不猜测网段。若使用 ESA 源站防护，其官方流程提供节点列表及更新方法。[ESA 源站防护](https://help.aliyun.com/zh/edge-security-acceleration/esa/user-guide/origin-protection/)
+- 从当前站点控制台或官方支持获取适用的回源列表，**不要猜测网段**。
+- 若使用 ESA 源站防护，官方流程会提供节点列表及更新方法。[ESA 源站防护](https://help.aliyun.com/zh/edge-security-acceleration/esa/user-guide/origin-protection/)
+- **不要**信任 `0.0.0.0/0` 或 `::/0`。只有真实连接来自可信网段时，OpenResty 才应相信该头。
+- 配置正确后，`$remote_addr` 才会恢复为 ESA 声称的客户端地址（它仍可能是邮箱图片代理的 IP）。[Nginx realip 模块](https://nginx.org/en/docs/http/ngx_http_realip_module.html)
 
-不要信任 `0.0.0.0/0` 或 `::/0`。只有真实连接来自可信网段时，OpenResty 才应相信该头。配置正确后，代理片段中的 `$remote_addr` 才会恢复为 ESA 声称的客户端地址；它仍可能是邮箱图片代理的 IP。[Nginx realip 模块](https://nginx.org/en/docs/http/ngx_http_realip_module.html)
+### 8.2 应用 → 信任 OpenResty
 
-**应用 → OpenResty 的信任：** `server.toml` 的 `trusted_proxies` 只填写 app 直接看到的 OpenResty 对端地址，不填写 ESA 网段。新版由 Docker 自动分配网络，不预设网关或容器 IP；初始 `[]` 表示先不信任转发头。此时仍能记录、发通知，但来源 IP 和创建限速可能暂时按同一个代理地址计算，完成下面的核对后再正式使用。
+`server.toml` 的 `trusted_proxies` **只填** app 直接看到的 OpenResty 对端地址，**不填** ESA 网段。
 
-通过公网域名请求一张测试图片后，运行以下命令。只打印来源字段，不打印管理凭据或全部请求头：
+新版由 Docker 自动分配网络，不预设网关或容器 IP。初始 `[]` 表示先不信任转发头：
 
-```sh
-docker compose exec -T app python -c 'import sqlite3,json; d=sqlite3.connect("/data/receipt.sqlite3"); r=d.execute("SELECT details FROM events ORDER BY created DESC LIMIT 1").fetchone(); x=json.loads(r[0]) if r else {}; print({k:x.get(k) for k in ("connection_ip","effective_source_ip","peer_is_trusted_proxy")})'
-```
+- 仍能记录、发通知；
+- 但来源 IP 和创建限速可能暂时按同一个代理地址计算；
+- 完成下面核对后再正式使用。
 
-确定该请求确实经过你的 OpenResty 后，将 `trusted_proxies` 改成输出中 `connection_ip` 对应的 IP `/32`，IPv6 用 `/128`，再重启 app。例如实际对端为 `172.22.0.1`，就填 `["172.22.0.1/32"]`，不要照抄这个示例。不信任整个公网或所有 Docker 容器，不启用 Uvicorn `proxy_headers`。重建网络或代理容器后，重新核对该地址。
+### 8.3 如何核对并填写
 
-通知中的 `connection_ip` 是 app 的直接对端；`effective_source_ip` 是可信代理链推导的地址。请求头是 app 实际收到的字段，可能经过代理改写，并非公网原始报文。
+1. 通过公网域名请求一张测试图片。
+2. 运行（只打印来源字段，不打印管理凭据或全部请求头）：
 
-## 9. 按层排查，不要同时修改所有配置
+   ```sh
+   docker compose exec -T app python -c 'import sqlite3,json; d=sqlite3.connect("/data/receipt.sqlite3"); r=d.execute("SELECT details FROM events ORDER BY created DESC LIMIT 1").fetchone(); x=json.loads(r[0]) if r else {}; print({k:x.get(k) for k in ("connection_ip","effective_source_ip","peer_is_trusted_proxy")})'
+   ```
 
-### 启动报 Pool overlaps
+3. 确定该请求确实经过你的 OpenResty 后，把 `trusted_proxies` 改成输出里 `connection_ip` 对应的 IP `/32`（IPv6 用 `/128`），再重启 app。
 
-旧 Compose 固定使用 `172.30.97.0/24`，可能与服务器已有 Docker 网络相交。新版去掉了 `ipam.config.subnet` 和两处 `ipv4_address`，让 Docker 自行选择可用网段。
+   例如实际对端是 `172.22.0.1`，就填 `["172.22.0.1/32"]`。**不要照抄这个示例。**
 
-将新版 `compose.yaml` 放回**当前项目目录**，保留原 `server.toml` 和项目名，然后重新执行原启动命令即可。不要删除 1Panel 或其他应用的网络，也不要运行 network prune 或 down -v。
+4. 不要信任整个公网或所有 Docker 容器，也不要启用 Uvicorn 的 `proxy_headers`。
+5. 重建网络或代理容器后，**重新核对**该地址。
 
-如果需要手动修订旧文件，将 app/nginx 两个服务的网络声明都改为：
+字段含义：
+
+| 字段 | 含义 |
+| --- | --- |
+| `connection_ip` | app 的直接对端地址 |
+| `effective_source_ip` | 经可信代理链推导出的地址 |
+| 请求头 | app 实际收到的字段，可能已被代理改写，并非公网原始报文 |
+
+---
+
+## 9. 按层排查：不要一次改所有配置
+
+### 9.1 启动报 `Pool overlaps`
+
+旧 Compose 固定使用 `172.30.97.0/24`，可能与服务器上已有 Docker 网段相交。新版去掉了 `ipam.config.subnet` 和两处 `ipv4_address`，由 Docker 自动选择可用网段。
+
+**处理：**
+
+1. 将新版 `compose.yaml` 放回**当前项目目录**。
+2. 保留原 `server.toml` 和项目名。
+3. 重新执行原启动命令。
+
+**不要**删除 1Panel 或其他应用的网络，**不要** `network prune`，**不要** `down -v`。
+
+若需手动改旧文件，把 app / nginx 两个服务的网络声明都改为：
 
 ```yaml
     networks:
@@ -249,51 +385,71 @@ networks:
   receipt: {}
 ```
 
-网络名字 `receipt` 没有变，变的是地址分配方式。如果本项目网络以前成功创建并已承载容器，Compose 可能提示网络配置需要重建；仅在该提示出现时，在**这个项目目录**执行不带 `-v` 的 `docker compose down`，再启动。不会删除数据库卷，但会暂时停止本工具；不操作其他项目。
+网络名字 `receipt` 没变，变的是地址分配方式。
 
-若自动分配仍报地址池不足，需要检查 Docker 守护进程的 default-address-pools 与当前网络分布；那是另一种情况，不能靠继续随机改网段解决。
+若本项目网络以前已成功创建并承载容器，Compose 可能提示网络配置需要重建。**仅在该提示出现时**，在本项目目录执行不带 `-v` 的 `docker compose down`，再启动。这会暂时停止本工具，但**不会**删除数据库卷；也不要操作其他项目。
 
-### 其他问题
+若自动分配仍报地址池不足，需检查 Docker 守护进程的 `default-address-pools` 与当前网络分布。那是另一种情况，不能靠继续随机改网段解决。
+
+### 9.2 分层检查表
+
+按顺序从内到外查，正常了再查下一层：
 
 | 检查 | 正常结果 | 失败时主要看 |
 | --- | --- | --- |
-| `docker compose ps` | app healthy | TOML、文件权限、数据库卷、app 日志 |
-| 本机 `http://127.0.0.1:18000/health` | JSON | 映射端口、进程、RECEIPT_PORT |
-| OpenResty 对应站点 | JSON | 网络模式、代理目标、重复 location、路径改写 |
-| 公网 `https://域名/health` | 证书正常、返回 JSON | ESA 边缘证书、回源 Host/SNI/协议、源站证书校验 |
-| 创建链接 | HTML 是公网域名 | public_base_url、API 422/429、ESA 挑战 |
+| `docker compose ps` | app `healthy` | TOML、文件权限、数据库卷、app 日志 |
+| 本机 `http://127.0.0.1:18000/health` | 返回 JSON | 映射端口、进程、`RECEIPT_PORT` |
+| OpenResty 对应站点 | 返回 JSON | 网络模式、代理目标、重复 location、路径改写 |
+| 公网 `https://域名/health` | 证书正常，返回 JSON | ESA 边缘证书、回源 Host/SNI/协议、源站证书校验 |
+| 创建链接 | HTML 里是公网域名 | `public_base_url`、API 422/429、ESA 挑战 |
 | 请求图片后刷新 | 事件数增加 | 缓存、404、静态图片规则是否截走请求 |
-| pending 变为 sent | SMTP 已接收 | 密码/授权码、SMTP 网络、发件地址限制 |
-| sent 后收件箱无邮件 | 最终收到 | 垃圾箱、隔离区、邮箱服务商投递日志 |
+| `pending` 变为 `sent` | SMTP 已接收 | 密码/授权码、SMTP 网络、发件地址限制 |
+| `sent` 后收件箱无邮件 | 最终收到 | 垃圾箱、隔离区、邮箱服务商投递日志 |
 
-若本机正常而 ESA 返回 502，检查 OpenResty 与 ESA 回源。源站自签名证书配上 ESA 强制验证，也可能导致回源失败。
+若本机正常而 ESA 返回 502，重点查 OpenResty 与 ESA 回源。源站自签名证书 + ESA 强制验证，也可能导致回源失败。
 
-需要绕过 ESA 时，在可信管理机检查源站：
+### 9.3 需要绕过 ESA 定位时
+
+在可信管理机上检查源站：
 
 ```sh
 curl --resolve receipt.example.com:443:你的源站IP https://receipt.example.com/health
 ```
 
-自签名源站证书可能报验证错误。仅在这一次定位中可加 `-k` 看能否获取 JSON，以区分证书和反代问题；正式公网访问与客户端仍通过正常证书验证。
+自签名源站证书可能报验证错误。**仅在这一次定位中**可加 `-k` 看能否拿到 JSON，用来区分“证书问题”和“反代问题”。正式公网访问与客户端仍应使用正常证书验证。
 
-## OpenResty 使用 bridge 网络的分支
+---
 
-bridge 容器里的 `127.0.0.1` 指向它自己，不能照搬 host 方案。
+## 10. OpenResty 使用 bridge 网络的分支
 
-1. 查实际网络：
+bridge 容器里的 `127.0.0.1` 指向它自己，**不能**照搬 host 方案。
+
+1. 查实际网络名：
 
    ```sh
    docker inspect --format '{{json .NetworkSettings.Networks}}' 你的OpenResty容器名
    ```
 
-2. 在项目 `.env` 填 `RECEIPT_PROXY_NETWORK=你实际查到的网络名`。
+2. 在项目 `.env` 中填写：
+
+   ```env
+   RECEIPT_PROXY_NETWORK=你实际查到的网络名
+   ```
+
 3. 让 app 加入同一个已有网络：
 
    ```sh
    docker compose -f compose.yaml -f compose.proxy-network.yaml up -d --build app
    ```
 
-4. 代理目标改成 `http://receipt-tool-app:8000`。这个网络别名由附加配置提供。app 创建后再保存、重载 OpenResty；重建 app 后若出现 502，重载代理让它重新解析地址。
-5. `trusted_proxies` 改为 OpenResty 在共享网络的实际 IP，再按第 8 节核对，不沿用 host 网关。
+4. 把 1Panel 里的代理目标改成：
 
-后续 Compose 命令都带这两个 `-f` 参数。默认回环端口仍可用于宿主机诊断，没有对公网开放。
+   ```text
+   http://receipt-tool-app:8000
+   ```
+
+   这个网络别名由附加配置提供。app 创建后再保存、重载 OpenResty；若重建 app 后出现 502，重载代理让它重新解析地址。
+
+5. `trusted_proxies` 填 OpenResty 在**共享网络里的实际 IP**（不要沿用 host 网关），再按第 8 节核对。
+
+后续所有 Compose 命令都带这两个 `-f` 参数。默认回环端口仍可用于宿主机诊断，没有对公网开放。

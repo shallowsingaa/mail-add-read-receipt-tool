@@ -90,3 +90,5 @@ data/
 certs/
 receipt-client.spec
 .docker-test/
+
+*.pdf
